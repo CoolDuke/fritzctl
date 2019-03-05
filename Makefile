@@ -1,23 +1,32 @@
+GO          ?= GO111MODULE=on go
+GO_NOMODULE ?= GO111MODULE=off go
+
 FIRST_GOPATH              := $(firstword $(subst :, ,$(GOPATH)))
-PKGS                      := $(shell go list ./...)
+PKGS                      := $(shell $(GO) list ./...)
 GOFILES_NOVENDOR          := $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 FRITZCTL_VERSION          ?= unknown
 FRITZCTL_OUTPUT           ?= fritzctl
 FRITZCTL_REVISION         := $(shell git rev-parse HEAD)
 BASH_COMPLETION_OUTPUT    ?= "os/completion/fritzctl"
 MAN_PAGE_OUTPUT           ?= "os/man/fritzctl.1"
-DEPENDENCIES_GRAPH_OUTPUT ?= "dependencies.png"
+COPYRIGHT_OUTPUT          ?= "os/doc/copyright"
 BUILDFLAGS                := -ldflags="-s -w -X github.com/bpicode/fritzctl/config.Version=$(FRITZCTL_VERSION) -X github.com/bpicode/fritzctl/config.Revision=$(FRITZCTL_REVISION)" -gcflags="-trimpath=$(GOPATH)" -asmflags="-trimpath=$(GOPATH)"
 TESTFLAGS                 ?=
 
-all: sysinfo build install test codequality completion_bash man
+all: sysinfo depverify build install test codequality completion_bash man copyright
 
-.PHONY: clean build man
+.PHONY: clean build man copyright analice
 
 define ok
 	@tput setaf 6 2>/dev/null || echo -n ""
 	@echo " [OK]"
 	@tput sgr0 2>/dev/null || echo -n ""
+endef
+
+define lazyinstall
+    @which $1 > /dev/null; if [ $$? -ne 0 ]; then \
+        $(GO_NOMODULE) get -u $2; \
+    fi
 endef
 
 sysinfo:
@@ -33,113 +42,132 @@ sysinfo:
 
 clean:
 	@echo -n ">> CLEAN"
-	@go clean -i
+	@$(GO) clean -i
 	@rm -f ./os/completion/fritzctl
 	@rm -f ./os/man/*.gz
+	@rm -f ./os/doc/copyright
 	@rm -f ./coverage-all.html
 	@rm -f ./coverage-all.out
 	@rm -f ./coverage.out
 	@rm -rf ./build/
+	@rm -f ./fritzctl
+	@rm -f ./analice
 	@$(call ok)
 
-deps:
-	@echo -n ">> DEPENDENCIES"
-	@go get -u github.com/golang/dep/cmd/dep
-	@dep ensure
-	@dep prune
-	@$(call ok)
-
-depprint: deps
-	@echo ">> DEPENDENCIES:"
-	@dep status
-
-depgraph: deps
-	@echo -n ">> DEPENDENCY GRAPH, output = $(DEPENDENCIES_GRAPH_OUTPUT)"
-	@dep status -dot | dot -T png -o $(DEPENDENCIES_GRAPH_OUTPUT)
+depverify:
+	@echo -n ">> DEPENDENCIES [VERIFY]"
+	@$(GO) mod verify 1>/dev/null
 	@$(call ok)
 
 build:
 	@echo -n ">> BUILD, version = $(FRITZCTL_VERSION)/$(FRITZCTL_REVISION), output = $(FRITZCTL_OUTPUT)"
-	@go build -o $(FRITZCTL_OUTPUT) $(BUILDFLAGS)
+	@$(GO) build -o $(FRITZCTL_OUTPUT) $(BUILDFLAGS)
 	@$(call ok)
 
 install:
 	@echo -n ">> INSTALL, version = $(FRITZCTL_VERSION)"
-	@go install $(BUILDFLAGS)
+	@$(GO) install $(BUILDFLAGS)
 	@$(call ok)
 
-test: build
+test:
 	@echo ">> TEST, \"full-mode\": race detector on"
 	@echo "mode: count" > coverage-all.out
 	@$(foreach pkg, $(PKGS),\
 	    echo -n "     ";\
-		go test -run '(Test|Example)' $(BUILDFLAGS) $(TESTFLAGS) -race -coverprofile=coverage.out -covermode=atomic $(pkg) || exit 1;\
+		$(GO) test -run '(Test|Example)' $(BUILDFLAGS) $(TESTFLAGS) -race -coverprofile=coverage.out -covermode=atomic $(pkg) || exit 1;\
 		tail -n +2 coverage.out >> coverage-all.out;)
-	@go tool cover -html=coverage-all.out -o coverage-all.html
+	@$(GO) tool cover -html=coverage-all.out -o coverage-all.html
 
 fasttest: build
 	@echo ">> TEST, \"fast-mode\": race detector off"
 	@echo "mode: count" > coverage-all.out
 	@$(foreach pkg, $(PKGS),\
 	    echo -n "     ";\
-		go test  -run '(Test|Example)' $(BUILDFLAGS) $(TESTFLAGS) -coverprofile=coverage.out $(pkg) || exit 1;\
+		$(GO) test  -run '(Test|Example)' $(BUILDFLAGS) $(TESTFLAGS) -coverprofile=coverage.out $(pkg) || exit 1;\
 		tail -n +2 coverage.out >> coverage-all.out;)
-	@go tool cover -html=coverage-all.out
+	@$(GO) tool cover -html=coverage-all.out -o coverage-all.html
 
 completion_bash:
 	@echo -n ">> BASH COMPLETION, output = $(BASH_COMPLETION_OUTPUT)"
-	@go run main.go completion bash > $(BASH_COMPLETION_OUTPUT)
+	@$(GO) run main.go completion bash > $(BASH_COMPLETION_OUTPUT)
 	@$(call ok)
 
 man:
 	@echo -n ">> MAN PAGE, output = $(MAN_PAGE_OUTPUT).gz"
-	@go run main.go doc man > $(MAN_PAGE_OUTPUT)
+	@$(GO) run main.go doc man > $(MAN_PAGE_OUTPUT)
 	@gzip --force $(MAN_PAGE_OUTPUT)
+	@$(call ok)
+
+analice:
+	@echo -n ">> ANALICE"
+	@$(GO) build github.com/bpicode/fritzctl/tools/analice
+	@$(call ok)
+
+license_compliance: analice
+	@echo -n ">> OSS LICENSE COMPLIANCE"
+	@$(GO) run github.com/bpicode/fritzctl/tools/analice generate notice $(PKGS) --tests=true --gooses=linux,windows,darwin > NOTICE.tmp
+	@diff NOTICE NOTICE.tmp || exit 1
+	@rm NOTICE.tmp
+	@$(call ok)
+
+copyright: license_compliance
+	@echo -n ">> COPYRIGHT, output = $(COPYRIGHT_OUTPUT)"
+	@$(GO) run github.com/bpicode/fritzctl/tools/analice generate copyright github.com/bpicode/fritzctl --tests=false --gooses=linux,windows,darwin > $(COPYRIGHT_OUTPUT)
 	@$(call ok)
 
 codequality:
 	@echo ">> CODE QUALITY"
+
+	@echo -n "     REVIVE"
+	@$(call lazyinstall,revive,github.com/mgechev/revive)
+	@revive -formatter friendly -exclude vendor/... ./...
+	@$(call ok)
+
 	@echo -n "     FMT"
 	@$(foreach gofile, $(GOFILES_NOVENDOR),\
 	        (gofmt -s -l -d -e $(gofile) | tee /dev/stderr) || exit 1;)
 	@$(call ok)
 
 	@echo -n "     VET"
-	@go vet ./...
+	@$(GO) vet ./...
 	@$(call ok)
 
 	@echo -n "     CYCLO"
-	@go get github.com/fzipp/gocyclo
+	@$(call lazyinstall,gocyclo,github.com/fzipp/gocyclo)
 	@$(foreach gofile, $(GOFILES_NOVENDOR),\
 			gocyclo -over 15 $(gofile);)
 	@$(call ok)
+
 	@echo -n "     LINT"
-	@go get github.com/golang/lint/golint
+	@$(call lazyinstall,golint,golang.org/x/lint/golint)
 	@$(foreach pkg, $(PKGS),\
 			golint -set_exit_status $(pkg);)
 	@$(call ok)
+
 	@echo -n "     INEFF"
-	@go get github.com/gordonklaus/ineffassign
+	@$(call lazyinstall,ineffassign,github.com/gordonklaus/ineffassign)
 	@ineffassign .
 	@$(call ok)
+
 	@echo -n "     SPELL"
-	@go get github.com/client9/misspell/cmd/misspell
+	@$(call lazyinstall,misspell,github.com/client9/misspell/cmd/misspell)
 	@$(foreach gofile, $(GOFILES_NOVENDOR),\
 			misspell --error $(gofile);)
 	@$(call ok)
-	@echo -n "     SIMPLE"
-	@go get honnef.co/go/tools/cmd/gosimple
-	@gosimple $(PKGS)
-	@$(call ok)
 
 	@echo -n "     STATIC"
-	@go get honnef.co/go/tools/cmd/staticcheck
-	@staticcheck $(PKGS)
+	@$(call lazyinstall,staticcheck,honnef.co/go/tools/cmd/staticcheck)
+	@staticcheck -checks=all $(PKGS)
 	@$(call ok)
 
-	@echo -n "     UNUSED"
-	@go get honnef.co/go/tools/cmd/unused
-	@unused $(PKGS)
+	@echo -n "     INTERFACER"
+	@$(call lazyinstall,interfacer,mvdan.cc/interfacer)
+	@interfacer ./...
+	@$(call ok)
+
+	@echo -n "     UNCONVERT"
+	@$(call lazyinstall,unconvert,github.com/mdempsky/unconvert)
+	@unconvert -v $(PKGS)
 	@$(call ok)
 
 dist_all: dist_linux dist_darwin dist_win dist_bsd
@@ -180,15 +208,17 @@ pkg_darwin: dist_darwin
 	@zip -q build/distributions/fritzctl-$(FRITZCTL_VERSION)-darwin-amd64.zip build/distributions/darwin_amd64/fritzctl
 	@$(call ok)
 
-pkg_linux: dist_linux man completion_bash
+pkg_linux: dist_linux man completion_bash copyright
 	@mkdir -p build/distributions/linux_amd64/usr/bin
 	@mkdir -p build/distributions/linux_amd64/etc/fritzctl
 	@mkdir -p build/distributions/linux_amd64/etc/bash_completion.d
 	@mkdir -p build/distributions/linux_amd64/usr/share/man/man1
+	@mkdir -p build/distributions/linux_amd64/usr/share/doc/fritzctl
 	@cp os/completion/fritzctl build/distributions/linux_amd64/etc/bash_completion.d/
-	@cp os/config/fritzctl.json build/distributions/linux_amd64/etc/fritzctl/
+	@cp os/config/config.yml build/distributions/linux_amd64/etc/fritzctl/
 	@cp os/config/fritz.pem build/distributions/linux_amd64/etc/fritzctl/
 	@cp os/man/*.1.gz build/distributions/linux_amd64/usr/share/man/man1/
+	@cp os/doc/copyright build/distributions/linux_amd64/usr/share/doc/fritzctl/
 
 	@echo ">> PACKAGE, linux/amd64/deb"
 	@echo -n "     "
@@ -201,10 +231,12 @@ pkg_linux: dist_linux man completion_bash
 	@mkdir -p build/distributions/linux_arm/etc/fritzctl
 	@mkdir -p build/distributions/linux_arm/etc/bash_completion.d
 	@mkdir -p build/distributions/linux_arm/usr/share/man/man1
+	@mkdir -p build/distributions/linux_arm/usr/share/doc/fritzctl
 	@cp os/completion/fritzctl build/distributions/linux_arm/etc/bash_completion.d/
-	@cp os/config/fritzctl.json build/distributions/linux_arm/etc/fritzctl/
+	@cp os/config/config.yml build/distributions/linux_arm/etc/fritzctl/
 	@cp os/config/fritz.pem build/distributions/linux_arm/etc/fritzctl/
 	@cp os/man/*.1.gz build/distributions/linux_arm/usr/share/man/man1/
+	@cp os/doc/copyright build/distributions/linux_arm/usr/share/doc/fritzctl/
 
 	@echo ">> PACKAGE, linux/armhf/deb"
 	@echo -n "     "
@@ -214,7 +246,7 @@ pkg_linux: dist_linux man completion_bash
 	@$(call mkpkg, arm, build/distributions/linux_arm/, build/distributions/, rpm)
 
 define mkpkg
-	fpm -f -t $4 -n fritzctl -a $1 -v $(FRITZCTL_VERSION) --log warn --description 'AVM FRITZ!Box client' -m bpicode --vendor bpicode --url https://github.com/bpicode/fritzctl --license MIT --category utils --provides fritzctl --deb-no-default-config-files --config-files etc/fritzctl/fritzctl.json --config-files etc/fritzctl/fritz.pem -p $3 -C $2 -s dir .
+	fpm -f -t $4 -n fritzctl -a $1 -v $(FRITZCTL_VERSION) --log warn --description 'AVM FRITZ!Box client' -m bpicode --vendor bpicode --url https://github.com/bpicode/fritzctl --license MIT --category utils --provides fritzctl --deb-no-default-config-files --config-files etc/fritzctl/config.yml --config-files etc/fritzctl/fritz.pem -p $3 -C $2 -s dir .
 endef
 
 sign_deb:
@@ -231,11 +263,11 @@ publish_deb:
 
 	@$(eval AMD64DEB:=$(shell ls ./build/distributions/fritzctl_*_amd64.deb | xargs -n 1 basename))
 	@echo "     UPLOAD -> BINTRAY, $(AMD64DEB)"
-	@curl -f -T ./build/distributions/$(AMD64DEB) -ubpicode:$(BINTRAY_API_KEY) -H "X-GPG-PASSPHRASE:$(BINTRAY_SIGN_GPG_PASSPHRASE)" "https://api.bintray.com/content/bpicode/fritzctl_deb/fritzctl/$(FRITZCTL_VERSION)/pool/main/m/fritzctl/$(AMD64DEB);deb_distribution=wheezy,jessie,stretch,sid;deb_component=main;deb_architecture=amd64;publish=1"
+	@curl -f -T ./build/distributions/$(AMD64DEB) -ubpicode:$(BINTRAY_API_KEY) -H "X-GPG-PASSPHRASE:$(BINTRAY_SIGN_GPG_PASSPHRASE)" "https://api.bintray.com/content/bpicode/fritzctl_deb/fritzctl/$(FRITZCTL_VERSION)/pool/main/m/fritzctl/$(AMD64DEB);deb_distribution=wheezy,jessie,stretch,buster,sid;deb_component=main;deb_architecture=amd64;publish=1"
 
 	@$(eval ARMDEB:=$(shell ls ./build/distributions/fritzctl_*_armhf.deb | xargs -n 1 basename))
 	@echo "     UPLOAD -> BINTRAY, $(AMD64DEB)"
-	@curl -f -T ./build/distributions/$(ARMDEB)   -ubpicode:$(BINTRAY_API_KEY) -H "X-GPG-PASSPHRASE:$(BINTRAY_SIGN_GPG_PASSPHRASE)" "https://api.bintray.com/content/bpicode/fritzctl_deb/fritzctl/$(FRITZCTL_VERSION)/pool/main/m/fritzctl/$(ARMDEB);deb_distribution=wheezy,jessie,stretch,sid;deb_component=main;deb_architecture=armhf;publish=1"
+	@curl -f -T ./build/distributions/$(ARMDEB)   -ubpicode:$(BINTRAY_API_KEY) -H "X-GPG-PASSPHRASE:$(BINTRAY_SIGN_GPG_PASSPHRASE)" "https://api.bintray.com/content/bpicode/fritzctl_deb/fritzctl/$(FRITZCTL_VERSION)/pool/main/m/fritzctl/$(ARMDEB);deb_distribution=wheezy,jessie,stretch,buster,sid;deb_component=main;deb_architecture=armhf;publish=1"
 
 	@echo "     CALCULATE METADATA, deb repository"
 	@curl -f -X POST -H "X-GPG-PASSPHRASE:$(BINTRAY_SIGN_GPG_PASSPHRASE)" -ubpicode:$(BINTRAY_API_KEY) https://api.bintray.com/calc_metadata/bpicode/fritzctl_deb
@@ -261,12 +293,17 @@ publish_win:
 	@echo "     UPLOAD -> BINTRAY, $(WINZIP)"
 	@curl -f -T ./build/distributions/$(WINZIP) -ubpicode:$(BINTRAY_API_KEY) -H "X-GPG-PASSPHRASE:$(BINTRAY_SIGN_GPG_PASSPHRASE)" "https://api.bintray.com/content/bpicode/fritzctl_win/fritzctl/$(FRITZCTL_VERSION)/$(WINZIP);publish=1"
 
-
 demogif:
 	@echo ">> DEMO GIF"
-	@go build -o mock/standalone/standalone  mock/standalone/main.go
+	@$(GO) build -o mock/standalone/standalone  mock/standalone/main.go
 	@(cd mock/ && standalone/./standalone -httptest.serve=127.0.0.1:8000 & echo $$! > /tmp/TEST_SERVER.PID)
 	@sleep 2
 	@(cd mock/ && asciinema rec -c '/bin/sh' ../images/fritzctl_demo.json)
 	@kill `cat </tmp/TEST_SERVER.PID`
 	@docker run --rm -v $(PWD)/images:/data asciinema/asciicast2gif -t monokai fritzctl_demo.json fritzctl_demo.gif
+
+release_github: pkg_all dist_all
+	@echo ">> GITHUB RELEASE"
+	@$(eval ASSETS:=$(shell find build/ -maxdepth 2 -type f -printf '-a %p\n'))
+	@git remote set-url origin https://github.com/bpicode/fritzctl.git
+	@hub release create --draft v$(FRITZCTL_VERSION) --message="fritzctl $(FRITZCTL_VERSION)" $(ASSETS)

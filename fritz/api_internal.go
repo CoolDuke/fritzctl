@@ -2,7 +2,7 @@ package fritz
 
 import (
 	"github.com/bpicode/fritzctl/httpread"
-	"github.com/pkg/errors"
+	"github.com/bpicode/fritzctl/internal/errors"
 )
 
 // Internal exposes Fritz!Box internal and undocumented API.
@@ -48,6 +48,8 @@ func (i *internal) ListLanDevices() (*LanDevices, error) {
 func (i *internal) InternetStats() (*TrafficMonitoringData, error) {
 	url := i.
 		inetStat().
+		query("myXhr", "1").
+		query("xhr", "1").
 		query("useajax", "1").
 		query("action", "get_graphic").
 		build()
@@ -64,7 +66,7 @@ func (i *internal) BoxInfo() (*BoxData, error) {
 	}{}
 	err := httpread.XML(i.client.getf(url), &h)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not obtain raw system status data")
+		return nil, errors.Wrapf(err, "could not obtain raw system status data")
 	}
 	return boxDataParser{}.parse(h.Body), nil
 }

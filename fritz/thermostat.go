@@ -1,17 +1,30 @@
 package fritz
 
+// HkrErrorDescriptions has a translation of error code to a warning/error/status description.
+var HkrErrorDescriptions = map[string]string{
+	"":  "",
+	"0": "",
+	"1": " Thermostat adjustment not possible. Is the device mounted correctly?",
+	"2": " Valve plunger cannot be driven far enough. Possible solutions: Open and close the plunger a couple of times by hand. Check if the battery is too weak.",
+	"3": " Valve plunger cannot be moved. Is it blocked?",
+	"4": " Preparing installation.",
+	"5": " Device in mode 'INSTALLATION'. It can be mounted now.",
+	"6": " Device is adjusting to the valve plunger.",
+}
+
 // Thermostat models the "HKR" device.
 // codebeat:disable[TOO_MANY_IVARS]
 type Thermostat struct {
-	Measured   string     `xml:"tist"`       // Measured temperature.
-	Goal       string     `xml:"tsoll"`      // Desired temperature, user controlled.
-	Saving     string     `xml:"absenk"`     // Energy saving temperature.
-	Comfort    string     `xml:"komfort"`    // Comfortable temperature.
-	NextChange NextChange `xml:"nextchange"` // The next scheduled temperature change.
-	Lock       string     `xml:"lock"`       // Switch locked (box defined)? 1/0 (empty if not known or if there was an error).
-	DeviceLock string     `xml:"devicelock"` // Switch locked (device defined)? 1/0 (empty if not known or if there was an error).
-	ErrorCode  string     `xml:"errorcode"`  // Error codes: 0 = OK, 1 = ... see https://avm.de/fileadmin/user_upload/Global/Service/Schnittstellen/AHA-HTTP-Interface.pdf.
-	BatteryLow string     `xml:"batterylow"` // "0" if the battery is OK, "1" if it is running low on capacity.
+	Measured   string     `xml:"tist"`             // Measured temperature.
+	Goal       string     `xml:"tsoll"`            // Desired temperature, user controlled.
+	Saving     string     `xml:"absenk"`           // Energy saving temperature.
+	Comfort    string     `xml:"komfort"`          // Comfortable temperature.
+	NextChange NextChange `xml:"nextchange"`       // The next scheduled temperature change.
+	Lock       string     `xml:"lock"`             // Switch locked (box defined)? 1/0 (empty if not known or if there was an error).
+	DeviceLock string     `xml:"devicelock"`       // Switch locked (device defined)? 1/0 (empty if not known or if there was an error).
+	ErrorCode  string     `xml:"errorcode"`        // Error codes: 0 = OK, 1 = ... see https://avm.de/fileadmin/user_upload/Global/Service/Schnittstellen/AHA-HTTP-Interface.pdf.
+	BatteryLow string     `xml:"batterylow"`       // "0" if the battery is OK, "1" if it is running low on capacity.
+	WindowOpen string     `xml_:"windowopenactiv"` // "1" if detected an open window (usually turns off heating), "0" if not.
 }
 
 // codebeat:enable[TOO_MANY_IVARS]

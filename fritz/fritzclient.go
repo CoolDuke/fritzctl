@@ -10,8 +10,8 @@ import (
 
 	"github.com/bpicode/fritzctl/config"
 	"github.com/bpicode/fritzctl/httpread"
+	"github.com/bpicode/fritzctl/internal/errors"
 	"github.com/bpicode/fritzctl/logger"
-	"github.com/pkg/errors"
 )
 
 // Client encapsulates the FRITZ!Box interaction API.
@@ -37,28 +37,34 @@ type Rights struct {
 }
 
 // NewClient creates a new Client with values read from a config file, given by the parameter configfile.
+// Deprecated: use NewClientFromConfig.
 func NewClient(configfile string) (*Client, error) {
-	configPtr, err := config.New(configfile)
+	cfg, err := config.New(configfile)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to read configuration")
+		return nil, errors.Wrapf(err, "unable to read configuration")
 	}
-	tlsConfig := tlsConfigFrom(configPtr)
+	return NewClientFromConfig(cfg), nil
+}
+
+// NewClientFromConfig creates a new Client with the passed configuration.
+func NewClientFromConfig(cfg *config.Config) *Client {
+	tlsConfig := tlsConfigFrom(cfg)
 	transport := &http.Transport{TLSClientConfig: tlsConfig}
 	httpClient := &http.Client{Transport: transport}
-	return &Client{Config: configPtr, HTTPClient: httpClient}, nil
+	return &Client{Config: cfg, HTTPClient: httpClient}
 }
 
 // Login tries to login into the box and obtain the session id.
 func (client *Client) Login() error {
 	sessionInfo, err := client.obtainChallenge()
 	if err != nil {
-		return errors.Wrap(err, "unable to obtain login challenge")
+		return errors.Wrapf(err, "unable to obtain login challenge")
 	}
 	client.SessionInfo = sessionInfo
 	logger.Debug("FRITZ!Box challenge is", client.SessionInfo.Challenge)
 	newSession, err := client.solveChallenge()
 	if err != nil {
-		return errors.Wrap(err, "unable to solve login challenge")
+		return errors.Wrapf(err, "unable to solve login challenge")
 	}
 	client.SessionInfo = newSession
 	logger.Info("Login successful")
@@ -116,7 +122,7 @@ func buildCertPool(cfg *config.Config) *x509.CertPool {
 	logger.Debug("Reading certificate file", cfg.Pki.CertificateFile)
 	caCert, err := ioutil.ReadFile(cfg.Pki.CertificateFile)
 	if err != nil {
-		logger.Warn("Using host certificates as fallback. Reason: could not read certificate file: ", err)
+		logger.Debug("Using host certificates as fallback. Reason: could not read certificate file: ", err)
 		return nil
 	}
 	ok := caCertPool.AppendCertsFromPEM(caCert)

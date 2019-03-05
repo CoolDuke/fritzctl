@@ -1,24 +1,26 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/bpicode/fritzctl/cmd"
 	"github.com/bpicode/fritzctl/logger"
 )
 
 var (
-	exitAdvice = os.Exit
+	exit = os.Exit
 )
 
 func main() {
 	defer func() {
 		r := recover()
 		if r != nil {
-			logger.Error(r)
+			printErr(r)
 		}
 		exitCode := determineExitCode(r)
-		exitAdvice(exitCode)
+		exit(exitCode)
 	}()
 	err := cmd.RootCmd.Execute()
 	if err != nil {
@@ -31,4 +33,28 @@ func determineExitCode(v interface{}) int {
 		return 0
 	}
 	return 1
+}
+
+func printErr(r interface{}) {
+	st := stack(r)
+	logger.Error(strings.Join(st, "\n  "))
+}
+
+func stack(e interface{}) []string {
+	if e == nil {
+		return nil
+	}
+	type causer interface {
+		error
+		Cause() error
+		Msg() string
+	}
+	var frames []string
+	csr, ok := e.(causer)
+	if !ok {
+		return []string{fmt.Sprint(e)}
+	}
+	frames = append(frames, csr.Msg()+":")
+	frames = append(frames, stack(csr.Cause())...)
+	return frames
 }

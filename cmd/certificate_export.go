@@ -6,13 +6,14 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/bpicode/fritzctl/config"
-	"github.com/bpicode/fritzctl/console"
-	"github.com/bpicode/fritzctl/stringutils"
+	"github.com/bpicode/fritzctl/internal/console"
+	"github.com/bpicode/fritzctl/internal/stringutils"
 	"github.com/spf13/cobra"
 )
 
@@ -41,11 +42,9 @@ func certExport(_ *cobra.Command, _ []string) error {
 }
 
 func mustReadConfig() *config.Config {
-	path, err := config.FindConfigFile()
-	assertNoErr(err, "cannot find configuration file")
-	cfg, err := config.New(path)
-	assertNoErr(err, "cannot parse configuration file")
-	return cfg
+	c, err := cfg(defaultConfigPlaces...)
+	assertNoErr(err, "cannot parse configuration")
+	return c
 }
 
 func mustConnect(cfg *config.Config) *tls.Conn {
@@ -56,7 +55,7 @@ func mustConnect(cfg *config.Config) *tls.Conn {
 
 func mustHaveCert(conn *tls.Conn) *x509.Certificate {
 	state := conn.ConnectionState()
-	assertTrue(len(state.PeerCertificates) > 0, "certificate export failed, list of peer certificates is empty")
+	assertTrue(len(state.PeerCertificates) > 0, errors.New("certificate export failed, list of peer certificates is empty"))
 	crt := state.PeerCertificates[len(state.PeerCertificates)-1]
 	return crt
 }
